@@ -1,15 +1,19 @@
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   MousePointer,
   Type,
-  Highlighter,
   Pen,
   Square,
   Circle,
+  Eraser,
   Download,
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Undo,
+  Redo,
+  Trash2,
 } from "lucide-react";
 import { Tool } from "./PDFEditor";
 import { ThemeToggle } from "./ThemeToggle";
@@ -19,6 +23,13 @@ interface ToolbarProps {
   onToolChange: (tool: Tool) => void;
   color: string;
   onColorChange: (color: string) => void;
+  fontSize: number;
+  onFontSizeChange: (size: number) => void;
+  fontFamily: string;
+  onFontFamilyChange: (family: string) => void;
+  onUndo: () => void;
+  onRedo: () => void;
+  onDelete: () => void;
   onExport: () => void;
   onBack: () => void;
   currentPage: number;
@@ -29,10 +40,10 @@ interface ToolbarProps {
 const tools: { type: Tool; icon: any; label: string }[] = [
   { type: "select", icon: MousePointer, label: "Select" },
   { type: "text", icon: Type, label: "Text" },
-  { type: "highlight", icon: Highlighter, label: "Highlight" },
   { type: "draw", icon: Pen, label: "Draw" },
   { type: "rectangle", icon: Square, label: "Rectangle" },
   { type: "circle", icon: Circle, label: "Circle" },
+  { type: "eraser", icon: Eraser, label: "Eraser" },
 ];
 
 const colors = [
@@ -43,11 +54,21 @@ const colors = [
   { value: "#FFD700", name: "Gold" },
 ];
 
+const fontSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 64];
+const fontFamilies = ["Arial", "Times New Roman", "Courier New", "Georgia", "Verdana", "Helvetica"];
+
 export const Toolbar = ({
   tool,
   onToolChange,
   color,
   onColorChange,
+  fontSize,
+  onFontSizeChange,
+  fontFamily,
+  onFontFamilyChange,
+  onUndo,
+  onRedo,
+  onDelete,
   onExport,
   onBack,
   currentPage,
@@ -55,8 +76,8 @@ export const Toolbar = ({
   onPageChange,
 }: ToolbarProps) => {
   return (
-    <div className="flex items-center justify-between px-6 py-4 bg-card/80 backdrop-blur-md border-b border-border/50 shadow-lg">
-      <div className="flex items-center gap-4">
+    <div className="flex items-center justify-between px-6 py-4 bg-card/80 backdrop-blur-md border-b border-border/50 shadow-lg flex-wrap gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <Button
           variant="outline"
           size="icon"
@@ -85,6 +106,33 @@ export const Toolbar = ({
           ))}
         </div>
 
+        <div className="flex items-center gap-1 p-1 bg-muted/50 rounded-lg">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onUndo}
+            title="Undo (Ctrl+Z)"
+          >
+            <Undo className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onRedo}
+            title="Redo (Ctrl+Shift+Z)"
+          >
+            <Redo className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onDelete}
+            title="Delete (Del)"
+          >
+            <Trash2 className="w-4 h-4" />
+          </Button>
+        </div>
+
         <div className="flex items-center gap-2">
           {colors.map((c) => (
             <button
@@ -99,6 +147,34 @@ export const Toolbar = ({
               style={{ backgroundColor: c.value }}
             />
           ))}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Select value={fontSize.toString()} onValueChange={(v) => onFontSizeChange(Number(v))}>
+            <SelectTrigger className="w-20 h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {fontSizes.map((size) => (
+                <SelectItem key={size} value={size.toString()}>
+                  {size}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          
+          <Select value={fontFamily} onValueChange={onFontFamilyChange}>
+            <SelectTrigger className="w-32 h-9">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {fontFamilies.map((family) => (
+                <SelectItem key={family} value={family}>
+                  {family}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
