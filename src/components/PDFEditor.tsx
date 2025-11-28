@@ -1,9 +1,10 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { PDFDocument } from "pdf-lib";
 import { Toolbar } from "./Toolbar";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+import { Canvas as FabricCanvas, IText, Rect, Circle, PencilBrush } from "fabric";
 import "react-pdf/dist/esm/Page/AnnotationLayer.css";
 import "react-pdf/dist/esm/Page/TextLayer.css";
 
@@ -15,130 +16,168 @@ interface PDFEditorProps {
   onBack: () => void;
 }
 
-export type Tool = "select" | "text" | "highlight" | "draw" | "rectangle" | "circle";
-
-interface Annotation {
-  type: Tool;
-  x: number;
-  y: number;
-  width?: number;
-  height?: number;
-  text?: string;
-  color: string;
-  page: number;
-}
+export type Tool = "select" | "text" | "draw" | "rectangle" | "circle" | "eraser";
 
 export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [tool, setTool] = useState<Tool>("select");
   const [color, setColor] = useState("#00D9FF");
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+  const [fontSize, setFontSize] = useState(16);
+  const [fontFamily, setFontFamily] = useState("Arial");
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const historyRef = useRef<{ states: string[]; currentIndex: number }>({ states: [], currentIndex: -1 });
+  const pageAnnotationsRef = useRef<Map<number, string>>(new Map());
   const { toast } = useToast();
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
   };
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (tool === "select") return;
+  const saveHistory = useCallback(() => {
+    if (!fabricCanvasRef.current) return;
+    const json = JSON.stringify(fabricCanvasRef.current.toJSON());
+    const { states, currentIndex } = historyRef.current;
+    const newStates = states.slice(0, currentIndex + 1);
+    newStates.push(json);
+    historyRef.current = { states: newStates, currentIndex: newStates.length - 1 };
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    const { states, currentIndex } = historyRef.current;
+    if (currentIndex > 0 && fabricCanvasRef.current) {
+      const newIndex = currentIndex - 1;
+      fabricCanvasRef.current.loadFromJSON(states[newIndex], () => {
+        fabricCanvasRef.current?.renderAll();
+        historyRef.current.currentIndex = newIndex;
+      });
+    }
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    const { states, currentIndex } = historyRef.current;
+    if (currentIndex < states.length - 1 && fabricCanvasRef.current) {
+      const newIndex = currentIndex + 1;
+      fabricCanvasRef.current.loadFromJSON(states[newIndex], () => {
+        fabricCanvasRef.current?.renderAll();
+        historyRef.current.currentIndex = newIndex;
+      });
+    }
+  }, []);
+
+  const handleToolChange = useCallback((newTool: Tool) => {
+    setTool(newTool);
+    if (!fabricCanvasRef.current) return;
+
+    const canvas = fabricCanvasRef.current;
     
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    setIsDrawing(true);
-    setStartPos({ x, y });
-
-    if (tool === "text") {
-      const text = prompt("Enter text:");
-      if (text) {
-        setAnnotations([
-          ...annotations,
-          { type: "text", x, y, text, color, page: currentPage },
-        ]);
-      }
-      setIsDrawing(false);
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || tool === "select" || tool === "text") return;
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    const ctx = canvasRef.current?.getContext("2d");
-    if (!ctx) return;
-
-    if (tool === "draw") {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(startPos.x, startPos.y);
-      ctx.lineTo(x, y);
-      ctx.stroke();
-      setStartPos({ x, y });
-    }
-  };
-
-  const handleMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (tool === "highlight" || tool === "rectangle" || tool === "circle") {
-      const width = x - startPos.x;
-      const height = y - startPos.y;
-
-      setAnnotations([
-        ...annotations,
-        {
-          type: tool,
-          x: startPos.x,
-          y: startPos.y,
-          width,
-          height,
-          color,
-          page: currentPage,
-        },
-      ]);
-
-      const ctx = canvasRef.current?.getContext("2d");
-      if (ctx) {
-        ctx.fillStyle = color + "40";
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-
-        if (tool === "circle") {
-          const radius = Math.sqrt(width ** 2 + height ** 2) / 2;
-          ctx.beginPath();
-          ctx.arc(startPos.x + width / 2, startPos.y + height / 2, radius, 0, 2 * Math.PI);
-          ctx.fill();
-          ctx.stroke();
-        } else {
-          ctx.fillRect(startPos.x, startPos.y, width, height);
-          ctx.strokeRect(startPos.x, startPos.y, width, height);
-        }
+    if (newTool === "draw") {
+      canvas.isDrawingMode = true;
+      const brush = new PencilBrush(canvas);
+      brush.color = color;
+      brush.width = 3;
+      canvas.freeDrawingBrush = brush;
+    } else if (newTool === "eraser") {
+      canvas.isDrawingMode = true;
+      const brush = new PencilBrush(canvas);
+      brush.color = "#FFFFFF";
+      brush.width = 20;
+      canvas.freeDrawingBrush = brush;
+    } else {
+      canvas.isDrawingMode = false;
+      
+      if (newTool === "text") {
+        const text = new IText("Click to edit text", {
+          left: 100,
+          top: 100,
+          fill: color,
+          fontSize: fontSize,
+          fontFamily: fontFamily,
+        });
+        canvas.add(text);
+        canvas.setActiveObject(text);
+        text.enterEditing();
+        saveHistory();
+      } else if (newTool === "rectangle") {
+        const rect = new Rect({
+          left: 100,
+          top: 100,
+          fill: color + "40",
+          stroke: color,
+          strokeWidth: 2,
+          width: 100,
+          height: 100,
+        });
+        canvas.add(rect);
+        canvas.setActiveObject(rect);
+        saveHistory();
+      } else if (newTool === "circle") {
+        const circle = new Circle({
+          left: 100,
+          top: 100,
+          fill: color + "40",
+          stroke: color,
+          strokeWidth: 2,
+          radius: 50,
+        });
+        canvas.add(circle);
+        canvas.setActiveObject(circle);
+        saveHistory();
       }
     }
+  }, [color, fontSize, fontFamily, saveHistory]);
 
-    setIsDrawing(false);
-  };
+  const handleColorChange = useCallback((newColor: string) => {
+    setColor(newColor);
+    if (!fabricCanvasRef.current) return;
+    
+    const activeObject = fabricCanvasRef.current.getActiveObject();
+    if (activeObject) {
+      if (activeObject.type === "i-text" || activeObject.type === "text") {
+        activeObject.set("fill", newColor);
+      } else {
+        activeObject.set("stroke", newColor);
+        activeObject.set("fill", newColor + "40");
+      }
+      fabricCanvasRef.current.renderAll();
+      saveHistory();
+    }
+  }, [saveHistory]);
+
+  const handleFontSizeChange = useCallback((size: number) => {
+    setFontSize(size);
+    if (!fabricCanvasRef.current) return;
+    
+    const activeObject = fabricCanvasRef.current.getActiveObject();
+    if (activeObject && (activeObject.type === "i-text" || activeObject.type === "text")) {
+      activeObject.set("fontSize", size);
+      fabricCanvasRef.current.renderAll();
+      saveHistory();
+    }
+  }, [saveHistory]);
+
+  const handleFontFamilyChange = useCallback((family: string) => {
+    setFontFamily(family);
+    if (!fabricCanvasRef.current) return;
+    
+    const activeObject = fabricCanvasRef.current.getActiveObject();
+    if (activeObject && (activeObject.type === "i-text" || activeObject.type === "text")) {
+      activeObject.set("fontFamily", family);
+      fabricCanvasRef.current.renderAll();
+      saveHistory();
+    }
+  }, [saveHistory]);
+
+  const handleDeleteSelected = useCallback(() => {
+    if (!fabricCanvasRef.current) return;
+    const activeObjects = fabricCanvasRef.current.getActiveObjects();
+    activeObjects.forEach(obj => fabricCanvasRef.current?.remove(obj));
+    fabricCanvasRef.current.discardActiveObject();
+    fabricCanvasRef.current.renderAll();
+    saveHistory();
+  }, [saveHistory]);
 
   const handleExport = async () => {
     try {
@@ -173,46 +212,91 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   };
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvasRef.current) return;
 
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const canvas = new FabricCanvas(canvasRef.current, {
+      width: 595,
+      height: 842,
+      backgroundColor: "transparent",
+      selection: true,
+    });
 
-    // Clear and redraw annotations for current page
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    fabricCanvasRef.current = canvas;
 
-    annotations
-      .filter((ann) => ann.page === currentPage)
-      .forEach((ann) => {
-        ctx.fillStyle = ann.color + "40";
-        ctx.strokeStyle = ann.color;
-        ctx.lineWidth = 2;
+    canvas.on("object:modified", saveHistory);
+    canvas.on("object:added", saveHistory);
+    canvas.on("path:created", saveHistory);
+    
+    saveHistory();
 
-        if (ann.type === "text" && ann.text) {
-          ctx.fillStyle = ann.color;
-          ctx.font = "16px Arial";
-          ctx.fillText(ann.text, ann.x, ann.y);
-        } else if (ann.type === "circle" && ann.width && ann.height) {
-          const radius = Math.sqrt(ann.width ** 2 + ann.height ** 2) / 2;
-          ctx.beginPath();
-          ctx.arc(ann.x + ann.width / 2, ann.y + ann.height / 2, radius, 0, 2 * Math.PI);
-          ctx.fill();
-          ctx.stroke();
-        } else if ((ann.type === "highlight" || ann.type === "rectangle") && ann.width && ann.height) {
-          ctx.fillRect(ann.x, ann.y, ann.width, ann.height);
-          ctx.strokeRect(ann.x, ann.y, ann.width, ann.height);
-        }
+    return () => {
+      canvas.dispose();
+    };
+  }, [saveHistory]);
+
+  useEffect(() => {
+    if (!fabricCanvasRef.current) return;
+    
+    // Save current page annotations
+    const currentState = JSON.stringify(fabricCanvasRef.current.toJSON());
+    pageAnnotationsRef.current.set(currentPage, currentState);
+  }, [currentPage]);
+
+  useEffect(() => {
+    if (!fabricCanvasRef.current) return;
+    
+    // Load annotations for new page
+    const savedState = pageAnnotationsRef.current.get(currentPage);
+    if (savedState) {
+      fabricCanvasRef.current.loadFromJSON(savedState, () => {
+        fabricCanvasRef.current?.renderAll();
       });
-  }, [annotations, currentPage]);
+    } else {
+      fabricCanvasRef.current.clear();
+    }
+    
+    // Reset history for new page
+    historyRef.current = { states: [], currentIndex: -1 };
+    saveHistory();
+  }, [currentPage, saveHistory]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && fabricCanvasRef.current) {
+        const activeObject = fabricCanvasRef.current.getActiveObject();
+        if (activeObject && document.activeElement?.tagName !== "TEXTAREA") {
+          e.preventDefault();
+          handleDeleteSelected();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleUndo, handleRedo, handleDeleteSelected]);
 
   return (
     <div className="flex flex-col h-screen bg-background">
       <Toolbar
         tool={tool}
-        onToolChange={setTool}
+        onToolChange={handleToolChange}
         color={color}
-        onColorChange={setColor}
+        onColorChange={handleColorChange}
+        fontSize={fontSize}
+        onFontSizeChange={handleFontSizeChange}
+        fontFamily={fontFamily}
+        onFontFamilyChange={handleFontFamilyChange}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        onDelete={handleDeleteSelected}
         onExport={handleExport}
         onBack={onBack}
         currentPage={currentPage}
@@ -241,13 +325,8 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
             </Document>
             <canvas
               ref={canvasRef}
-              className="absolute top-0 left-0 cursor-crosshair"
-              width={595}
-              height={842}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              style={{ pointerEvents: tool === "select" ? "none" : "auto" }}
+              className="absolute top-0 left-0"
+              style={{ cursor: tool === "select" ? "default" : "crosshair" }}
             />
           </div>
         </div>
