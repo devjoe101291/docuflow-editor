@@ -8,8 +8,11 @@ import { Canvas as FabricCanvas, IText, Rect, Circle, PencilBrush } from "fabric
 import "react-pdf/dist/esm/Page/AnnotationLayer.css";
 import "react-pdf/dist/esm/Page/TextLayer.css";
 
-// Configure PDF.js worker - use unpkg as a reliable CDN
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@4.4.168/build/pdf.worker.min.js`;
+// Configure PDF.js worker
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url,
+).toString();
 
 interface PDFEditorProps {
   file: File;
@@ -21,10 +24,13 @@ export type Tool = "select" | "text" | "draw" | "rectangle" | "circle" | "eraser
 export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState({ width: 595, height: 842 });
   const [tool, setTool] = useState<Tool>("select");
   const [color, setColor] = useState("#00D9FF");
   const [fontSize, setFontSize] = useState(16);
   const [fontFamily, setFontFamily] = useState("Arial");
+  const [pdfUrl, setPdfUrl] = useState<string>("");
+  const [loadError, setLoadError] = useState<string>("");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -32,8 +38,36 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   const pageAnnotationsRef = useRef<Map<number, string>>(new Map());
   const { toast } = useToast();
 
+  // Create object URL for the PDF file
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setPdfUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
+    setLoadError("");
+  };
+
+  const onDocumentLoadError = (error: Error) => {
+    console.error("PDF load error:", error);
+    setLoadError("Failed to load PDF. Please try a different file.");
+    toast({
+      title: "Error loading PDF",
+      description: error.message,
+      variant: "destructive",
+    });
+  };
+
+  const onPageLoadSuccess = (page: any) => {
+    const { width, height } = page;
+    setPageSize({ width, height });
+    
+    // Resize fabric canvas to match PDF page
+    if (fabricCanvasRef.current) {
+      fabricCanvasRef.current.setDimensions({ width, height });
+    }
   };
 
   const saveHistory = useCallback(() => {
@@ -215,8 +249,8 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
     if (!canvasRef.current) return;
 
     const canvas = new FabricCanvas(canvasRef.current, {
-      width: 595,
-      height: 842,
+      width: pageSize.width,
+      height: pageSize.height,
       backgroundColor: "transparent",
       selection: true,
     });
@@ -232,7 +266,7 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
     return () => {
       canvas.dispose();
     };
-  }, [saveHistory]);
+  }, [saveHistory, pageSize]);
 
   useEffect(() => {
     if (!fabricCanvasRef.current) return;
@@ -306,29 +340,49 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
 
       <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30 p-8">
         <div className="flex justify-center">
-          <div className="relative inline-block shadow-glow rounded-lg overflow-hidden">
-            <Document
-              file={file}
-              onLoadSuccess={onDocumentLoadSuccess}
-              loading={
-                <div className="flex items-center justify-center h-96 bg-card">
-                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                </div>
-              }
-            >
-              <Page
-                pageNumber={currentPage}
-                renderTextLayer={true}
-                renderAnnotationLayer={true}
-                className="shadow-2xl"
+          {loadError ? (
+            <div className="flex flex-col items-center justify-center h-96 bg-card rounded-lg p-8">
+              <p className="text-destructive mb-4">{loadError}</p>
+              <button 
+                onClick={onBack}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg"
+              >
+                Go Back
+              </button>
+            </div>
+          ) : (
+            <div className="relative inline-block shadow-glow rounded-lg overflow-hidden">
+              {pdfUrl && (
+                <Document
+                  file={pdfUrl}
+                  onLoadSuccess={onDocumentLoadSuccess}
+                  onLoadError={onDocumentLoadError}
+                  loading={
+                    <div className="flex items-center justify-center h-96 bg-card" style={{ width: pageSize.width }}>
+                      <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                    </div>
+                  }
+                >
+                  <Page
+                    pageNumber={currentPage}
+                    renderTextLayer={true}
+                    renderAnnotationLayer={true}
+                    className="shadow-2xl"
+                    onLoadSuccess={onPageLoadSuccess}
+                  />
+                </Document>
+              )}
+              <canvas
+                ref={canvasRef}
+                className="absolute top-0 left-0 pointer-events-auto"
+                style={{ 
+                  cursor: tool === "select" ? "default" : "crosshair",
+                  width: pageSize.width,
+                  height: pageSize.height,
+                }}
               />
-            </Document>
-            <canvas
-              ref={canvasRef}
-              className="absolute top-0 left-0"
-              style={{ cursor: tool === "select" ? "default" : "crosshair" }}
-            />
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
