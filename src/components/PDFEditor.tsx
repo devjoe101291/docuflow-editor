@@ -242,7 +242,10 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
 
   // Initialize fabric canvas only once
   useEffect(() => {
-    if (!canvasRef.current || fabricCanvasRef.current) return;
+    if (!canvasRef.current) return;
+    
+    // If canvas already exists, don't recreate
+    if (fabricCanvasRef.current) return;
 
     const canvas = new FabricCanvas(canvasRef.current, {
       width: pageSize.width,
@@ -253,11 +256,20 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
 
     fabricCanvasRef.current = canvas;
 
-    canvas.on("object:modified", saveHistory);
-    canvas.on("object:added", saveHistory);
-    canvas.on("path:created", saveHistory);
+    const handleHistorySave = () => {
+      const json = JSON.stringify(canvas.toJSON());
+      const { states, currentIndex } = historyRef.current;
+      const newStates = states.slice(0, currentIndex + 1);
+      newStates.push(json);
+      historyRef.current = { states: newStates, currentIndex: newStates.length - 1 };
+    };
+
+    canvas.on("object:modified", handleHistorySave);
+    canvas.on("object:added", handleHistorySave);
+    canvas.on("path:created", handleHistorySave);
     
-    saveHistory();
+    // Initial history state
+    handleHistorySave();
 
     return () => {
       canvas.dispose();
