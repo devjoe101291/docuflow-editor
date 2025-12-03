@@ -63,11 +63,6 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   const onPageLoadSuccess = (page: any) => {
     const { width, height } = page;
     setPageSize({ width, height });
-    
-    // Resize fabric canvas to match PDF page
-    if (fabricCanvasRef.current) {
-      fabricCanvasRef.current.setDimensions({ width, height });
-    }
   };
 
   const saveHistory = useCallback(() => {
@@ -245,8 +240,9 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
     }
   };
 
+  // Initialize fabric canvas only once
   useEffect(() => {
-    if (!canvasRef.current) return;
+    if (!canvasRef.current || fabricCanvasRef.current) return;
 
     const canvas = new FabricCanvas(canvasRef.current, {
       width: pageSize.width,
@@ -265,33 +261,47 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
 
     return () => {
       canvas.dispose();
+      fabricCanvasRef.current = null;
     };
-  }, [saveHistory, pageSize]);
+  }, []);
 
+  // Update canvas dimensions when page size changes
   useEffect(() => {
-    if (!fabricCanvasRef.current) return;
-    
-    // Save current page annotations
-    const currentState = JSON.stringify(fabricCanvasRef.current.toJSON());
-    pageAnnotationsRef.current.set(currentPage, currentState);
-  }, [currentPage]);
-
-  useEffect(() => {
-    if (!fabricCanvasRef.current) return;
-    
-    // Load annotations for new page
-    const savedState = pageAnnotationsRef.current.get(currentPage);
-    if (savedState) {
-      fabricCanvasRef.current.loadFromJSON(savedState, () => {
-        fabricCanvasRef.current?.renderAll();
-      });
-    } else {
-      fabricCanvasRef.current.clear();
+    if (fabricCanvasRef.current && pageSize.width > 0 && pageSize.height > 0) {
+      fabricCanvasRef.current.setDimensions({ width: pageSize.width, height: pageSize.height });
+      fabricCanvasRef.current.renderAll();
     }
+  }, [pageSize]);
+
+  // Save annotations when leaving a page
+  const prevPageRef = useRef<number>(currentPage);
+  
+  useEffect(() => {
+    if (!fabricCanvasRef.current) return;
     
-    // Reset history for new page
-    historyRef.current = { states: [], currentIndex: -1 };
-    saveHistory();
+    // Save annotations for previous page before switching
+    if (prevPageRef.current !== currentPage) {
+      const currentState = JSON.stringify(fabricCanvasRef.current.toJSON());
+      pageAnnotationsRef.current.set(prevPageRef.current, currentState);
+      
+      // Load annotations for new page
+      const savedState = pageAnnotationsRef.current.get(currentPage);
+      if (savedState) {
+        fabricCanvasRef.current.loadFromJSON(savedState, () => {
+          fabricCanvasRef.current?.renderAll();
+        });
+      } else {
+        fabricCanvasRef.current.clear();
+        fabricCanvasRef.current.backgroundColor = "transparent";
+        fabricCanvasRef.current.renderAll();
+      }
+      
+      // Reset history for new page
+      historyRef.current = { states: [], currentIndex: -1 };
+      saveHistory();
+      
+      prevPageRef.current = currentPage;
+    }
   }, [currentPage, saveHistory]);
 
   useEffect(() => {
