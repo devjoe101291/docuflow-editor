@@ -373,7 +373,10 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
               </button>
             </div>
           ) : (
-            <div className="relative inline-block shadow-glow rounded-lg overflow-hidden">
+            <div 
+              className="relative shadow-glow rounded-lg overflow-hidden"
+              style={{ width: pageSize.width, height: pageSize.height }}
+            >
               {pdfUrl && (
                 <Document
                   file={pdfUrl}
@@ -387,22 +390,24 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
                 >
                   <Page
                     pageNumber={currentPage}
-                    renderTextLayer={true}
-                    renderAnnotationLayer={true}
+                    renderTextLayer={false}
+                    renderAnnotationLayer={false}
                     className="shadow-2xl"
                     onLoadSuccess={onPageLoadSuccess}
                   />
                 </Document>
               )}
-              <canvas
-                ref={canvasRef}
-                className="absolute top-0 left-0 pointer-events-auto"
-                style={{ 
-                  cursor: tool === "select" ? "default" : "crosshair",
-                  width: pageSize.width,
-                  height: pageSize.height,
-                }}
-              />
+              <div 
+                className="absolute top-0 left-0"
+                style={{ width: pageSize.width, height: pageSize.height }}
+              >
+                <canvas
+                  ref={canvasRef}
+                  style={{ 
+                    cursor: tool === "select" ? "default" : "crosshair",
+                  }}
+                />
+              </div>
             </div>
           )}
         </div>
