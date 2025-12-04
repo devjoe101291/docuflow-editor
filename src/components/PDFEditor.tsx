@@ -210,6 +210,12 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
 
   const handleExport = async () => {
     try {
+      // Save current page annotations first
+      if (fabricCanvasRef.current) {
+        const currentState = JSON.stringify(fabricCanvasRef.current.toJSON());
+        pageAnnotationsRef.current.set(currentPage, currentState);
+      }
+
       const existingPdfBytes = await file.arrayBuffer();
       const pdfDoc = await PDFDocument.load(existingPdfBytes);
       
@@ -217,6 +223,56 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
         title: "Exporting PDF",
         description: "Your annotated PDF is being prepared...",
       });
+
+      // Create a temporary canvas to render annotations for each page
+      const tempCanvas = document.createElement('canvas');
+      const tempFabricCanvas = new FabricCanvas(tempCanvas, {
+        backgroundColor: 'transparent',
+      });
+
+      // Process each page with annotations
+      for (const [pageNum, annotationJson] of pageAnnotationsRef.current.entries()) {
+        const page = pdfDoc.getPage(pageNum - 1); // pdf-lib uses 0-based index
+        const { width, height } = page.getSize();
+        
+        // Set canvas dimensions to match PDF page
+        tempFabricCanvas.setDimensions({ width, height });
+        
+        // Load the annotations
+        await new Promise<void>((resolve) => {
+          tempFabricCanvas.loadFromJSON(annotationJson, () => {
+            tempFabricCanvas.renderAll();
+            resolve();
+          });
+        });
+
+        // Check if there are any objects to render
+        if (tempFabricCanvas.getObjects().length > 0) {
+          // Export canvas as PNG with transparency
+          const dataUrl = tempFabricCanvas.toDataURL({
+            format: 'png',
+            multiplier: 2, // Higher quality
+          });
+
+          // Convert data URL to bytes
+          const base64Data = dataUrl.split(',')[1];
+          const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+
+          // Embed the image
+          const pngImage = await pdfDoc.embedPng(imageBytes);
+          
+          // Draw the annotation image on top of the page
+          page.drawImage(pngImage, {
+            x: 0,
+            y: 0,
+            width: width,
+            height: height,
+          });
+        }
+      }
+
+      // Clean up temp canvas
+      tempFabricCanvas.dispose();
 
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
@@ -232,6 +288,7 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
         description: "Your PDF has been downloaded.",
       });
     } catch (error) {
+      console.error("Export error:", error);
       toast({
         title: "Export failed",
         description: "There was an error exporting your PDF.",
