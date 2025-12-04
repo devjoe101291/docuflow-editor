@@ -224,19 +224,21 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
         description: "Your annotated PDF is being prepared...",
       });
 
-      // Create a temporary canvas to render annotations for each page
-      const tempCanvas = document.createElement('canvas');
-      const tempFabricCanvas = new FabricCanvas(tempCanvas, {
-        backgroundColor: 'transparent',
-      });
-
       // Process each page with annotations
       for (const [pageNum, annotationJson] of pageAnnotationsRef.current.entries()) {
         const page = pdfDoc.getPage(pageNum - 1); // pdf-lib uses 0-based index
-        const { width, height } = page.getSize();
+        const { width: pdfWidth, height: pdfHeight } = page.getSize();
         
-        // Set canvas dimensions to match PDF page
-        tempFabricCanvas.setDimensions({ width, height });
+        // Create a temporary canvas matching the display size
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = pageSize.width;
+        tempCanvas.height = pageSize.height;
+        
+        const tempFabricCanvas = new FabricCanvas(tempCanvas, {
+          backgroundColor: 'transparent',
+          width: pageSize.width,
+          height: pageSize.height,
+        });
         
         // Load the annotations
         await new Promise<void>((resolve) => {
@@ -262,17 +264,18 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
           const pngImage = await pdfDoc.embedPng(imageBytes);
           
           // Draw the annotation image on top of the page
+          // PDF coordinates start from bottom-left, so we need to position correctly
           page.drawImage(pngImage, {
             x: 0,
             y: 0,
-            width: width,
-            height: height,
+            width: pdfWidth,
+            height: pdfHeight,
           });
         }
+        
+        // Clean up temp canvas
+        tempFabricCanvas.dispose();
       }
-
-      // Clean up temp canvas
-      tempFabricCanvas.dispose();
 
       const pdfBytes = await pdfDoc.save();
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" });
