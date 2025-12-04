@@ -225,53 +225,76 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
       });
 
       // Process each page with annotations
-      for (const [pageNum, annotationJson] of pageAnnotationsRef.current.entries()) {
+      const annotationEntries = Array.from(pageAnnotationsRef.current.entries());
+      
+      for (const [pageNum, annotationJson] of annotationEntries) {
         const page = pdfDoc.getPage(pageNum - 1); // pdf-lib uses 0-based index
         const { width: pdfWidth, height: pdfHeight } = page.getSize();
         
-        // Create a temporary canvas matching the display size
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = pageSize.width;
-        tempCanvas.height = pageSize.height;
+        // Parse and check if there are objects
+        const parsed = JSON.parse(annotationJson);
+        if (!parsed.objects || parsed.objects.length === 0) {
+          continue;
+        }
         
+        // Create a temporary canvas element
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = pageSize.width * 2; // Higher resolution
+        tempCanvas.height = pageSize.height * 2;
+        
+        // Create fabric canvas
         const tempFabricCanvas = new FabricCanvas(tempCanvas, {
           backgroundColor: 'transparent',
-          width: pageSize.width,
-          height: pageSize.height,
+          width: pageSize.width * 2,
+          height: pageSize.height * 2,
         });
+        
+        // Wait for fabric canvas to initialize
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Scale all objects to match higher resolution
+        const scaledObjects = parsed.objects.map((obj: any) => ({
+          ...obj,
+          left: (obj.left || 0) * 2,
+          top: (obj.top || 0) * 2,
+          scaleX: (obj.scaleX || 1) * 2,
+          scaleY: (obj.scaleY || 1) * 2,
+          strokeWidth: (obj.strokeWidth || 1) * 2,
+        }));
+        
+        const scaledJson = { ...parsed, objects: scaledObjects };
         
         // Load the annotations
         await new Promise<void>((resolve) => {
-          tempFabricCanvas.loadFromJSON(annotationJson, () => {
+          tempFabricCanvas.loadFromJSON(JSON.stringify(scaledJson), () => {
             tempFabricCanvas.renderAll();
             resolve();
           });
         });
+        
+        // Wait for render to complete
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-        // Check if there are any objects to render
-        if (tempFabricCanvas.getObjects().length > 0) {
-          // Export canvas as PNG with transparency
-          const dataUrl = tempFabricCanvas.toDataURL({
-            format: 'png',
-            multiplier: 2, // Higher quality
-          });
+        // Export canvas as PNG with transparency
+        const dataUrl = tempFabricCanvas.toDataURL({
+          format: 'png',
+          multiplier: 1,
+        });
 
-          // Convert data URL to bytes
-          const base64Data = dataUrl.split(',')[1];
-          const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+        // Convert data URL to bytes
+        const base64Data = dataUrl.split(',')[1];
+        const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
 
-          // Embed the image
-          const pngImage = await pdfDoc.embedPng(imageBytes);
-          
-          // Draw the annotation image on top of the page
-          // PDF coordinates start from bottom-left, so we need to position correctly
-          page.drawImage(pngImage, {
-            x: 0,
-            y: 0,
-            width: pdfWidth,
-            height: pdfHeight,
-          });
-        }
+        // Embed the image
+        const pngImage = await pdfDoc.embedPng(imageBytes);
+        
+        // Draw the annotation image on top of the page
+        page.drawImage(pngImage, {
+          x: 0,
+          y: 0,
+          width: pdfWidth,
+          height: pdfHeight,
+        });
         
         // Clean up temp canvas
         tempFabricCanvas.dispose();

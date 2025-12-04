@@ -47,6 +47,8 @@ const tools: { type: Tool; icon: any; label: string }[] = [
 ];
 
 const colors = [
+  { value: "#000000", name: "Black" },
+  { value: "#FFFFFF", name: "White" },
   { value: "#00D9FF", name: "Cyan" },
   { value: "#B565FF", name: "Purple" },
   { value: "#00FF85", name: "Green" },
@@ -142,8 +144,8 @@ export const Toolbar = ({
               className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 ${
                 color === c.value
                   ? "border-foreground ring-2 ring-primary shadow-glow"
-                  : "border-border/50"
-              }`}
+                  : "border-muted-foreground/50"
+              } ${c.value === "#FFFFFF" ? "border-muted-foreground" : ""}`}
               style={{ backgroundColor: c.value }}
             />
           ))}
