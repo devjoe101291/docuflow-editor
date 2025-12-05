@@ -69,46 +69,55 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   // Load PDF document for text extraction
   useEffect(() => {
     const loadPdfDoc = async () => {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-      pdfDocRef.current = pdf;
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+        pdfDocRef.current = pdf;
+        // Trigger text extraction after PDF loads
+        if (pageSize.width > 0) {
+          extractTextFromPage(currentPage);
+        }
+      } catch (error) {
+        console.error("Error loading PDF for text extraction:", error);
+      }
     };
     loadPdfDoc();
   }, [file]);
 
+  const extractTextFromPage = async (pageNum: number) => {
+    if (!pdfDocRef.current) return;
+    
+    try {
+      const page = await pdfDocRef.current.getPage(pageNum);
+      const textContent = await page.getTextContent();
+      const viewport = page.getViewport({ scale: pageSize.width / page.getViewport({ scale: 1 }).width });
+      
+      const items: TextItem[] = textContent.items
+        .filter((item: any) => item.str && item.str.trim())
+        .map((item: any) => {
+          const tx = pdfjs.Util.transform(viewport.transform, item.transform);
+          const fontSize = Math.abs(item.transform[0]) * (pageSize.width / page.getViewport({ scale: 1 }).width);
+          return {
+            str: item.str,
+            x: tx[4],
+            y: pageSize.height - tx[5],
+            width: item.width * (pageSize.width / page.getViewport({ scale: 1 }).width),
+            height: fontSize * 1.2,
+            fontSize: fontSize,
+            fontFamily: item.fontName || 'Helvetica',
+          };
+        });
+      
+      setTextItems(items);
+    } catch (error) {
+      console.error("Error extracting text:", error);
+    }
+  };
+
   // Extract text items when page changes
   useEffect(() => {
-    const extractText = async () => {
-      if (!pdfDocRef.current) return;
-      
-      try {
-        const page = await pdfDocRef.current.getPage(currentPage);
-        const textContent = await page.getTextContent();
-        const viewport = page.getViewport({ scale: 1 });
-        
-        const items: TextItem[] = textContent.items
-          .filter((item: any) => item.str && item.str.trim())
-          .map((item: any) => {
-            const tx = pdfjs.Util.transform(viewport.transform, item.transform);
-            return {
-              str: item.str,
-              x: tx[4],
-              y: pageSize.height - tx[5] - item.height,
-              width: item.width,
-              height: item.height,
-              fontSize: item.transform[0] || 12,
-              fontFamily: item.fontName || 'Arial',
-            };
-          });
-        
-        setTextItems(items);
-      } catch (error) {
-        console.error("Error extracting text:", error);
-      }
-    };
-    
-    if (pageSize.width > 0) {
-      extractText();
+    if (pageSize.width > 0 && pdfDocRef.current) {
+      extractTextFromPage(currentPage);
     }
   }, [currentPage, pageSize]);
 
@@ -659,34 +668,65 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
               {/* Text edit overlay - clickable text items */}
               {tool === "edit-text" && (
                 <div 
-                  className="absolute top-0 left-0 pointer-events-none"
+                  className="absolute top-0 left-0"
                   style={{ width: pageSize.width, height: pageSize.height }}
                 >
-                  {textItems.map((item, index) => (
-                    <div
-                      key={index}
-                      className={`absolute pointer-events-auto cursor-text transition-all ${
-                        isTextEdited(item) 
-                          ? "bg-green-200/50 border border-green-500" 
-                          : "hover:bg-blue-200/50 hover:border hover:border-blue-500"
-                      }`}
-                      style={{
-                        left: item.x,
-                        top: item.y,
-                        minWidth: item.width,
-                        minHeight: item.height,
-                        fontSize: item.fontSize,
-                        padding: '0 2px',
-                      }}
-                      onClick={() => handleTextClick(item)}
-                    >
-                      {isTextEdited(item) && (
-                        <span className="text-black" style={{ fontSize: item.fontSize }}>
-                          {getDisplayText(item)}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                  {textItems.map((item, index) => {
+                    const isEditing = editingText && editingText.x === item.x && editingText.y === item.y;
+                    const edited = isTextEdited(item);
+                    
+                    return (
+                      <div
+                        key={index}
+                        className="absolute"
+                        style={{
+                          left: item.x,
+                          top: item.y,
+                          minWidth: Math.max(item.width, 50),
+                          height: item.height + 4,
+                        }}
+                      >
+                        {isEditing ? (
+                          <input
+                            type="text"
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onBlur={handleTextEditSave}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleTextEditSave();
+                              if (e.key === 'Escape') handleTextEditCancel();
+                            }}
+                            autoFocus
+                            className="bg-white border-2 border-blue-500 outline-none px-1"
+                            style={{
+                              fontSize: item.fontSize,
+                              fontFamily: item.fontFamily,
+                              color: '#000',
+                              minWidth: Math.max(item.width, 100),
+                              height: item.height + 4,
+                            }}
+                          />
+                        ) : (
+                          <div
+                            className={`cursor-text h-full px-1 ${
+                              edited 
+                                ? "bg-yellow-200/80 border border-yellow-500" 
+                                : "hover:bg-blue-100/80 hover:border hover:border-blue-400"
+                            }`}
+                            style={{
+                              fontSize: item.fontSize,
+                              fontFamily: item.fontFamily,
+                              color: edited ? '#000' : 'transparent',
+                              lineHeight: `${item.height}px`,
+                            }}
+                            onClick={() => handleTextClick(item)}
+                          >
+                            {edited ? getDisplayText(item) : item.str}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
@@ -699,13 +739,14 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
                   {(textEdits.get(currentPage) || []).map((edit, index) => (
                     <div
                       key={index}
-                      className="absolute bg-white"
+                      className="absolute bg-white px-1"
                       style={{
-                        left: edit.original.x - 2,
-                        top: edit.original.y - 2,
-                        padding: '2px 4px',
+                        left: edit.original.x,
+                        top: edit.original.y,
                         fontSize: edit.original.fontSize,
+                        fontFamily: edit.original.fontFamily,
                         color: '#000',
+                        lineHeight: `${edit.original.height}px`,
                       }}
                     >
                       {edit.newText}
@@ -729,41 +770,6 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
           )}
         </div>
       </div>
-
-      {/* Text edit dialog */}
-      {editingText && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Edit Text</h3>
-            <p className="text-sm text-muted-foreground mb-2">Original: "{editingText.str}"</p>
-            <input
-              type="text"
-              value={editValue}
-              onChange={(e) => setEditValue(e.target.value)}
-              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground mb-4"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleTextEditSave();
-                if (e.key === 'Escape') handleTextEditCancel();
-              }}
-            />
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={handleTextEditCancel}
-                className="px-4 py-2 border border-border rounded-lg hover:bg-muted"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleTextEditSave}
-                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
