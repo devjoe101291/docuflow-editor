@@ -14,6 +14,7 @@ import {
   Undo,
   Redo,
   Trash2,
+  Edit3,
 } from "lucide-react";
 import { Tool } from "./PDFEditor";
 import { ThemeToggle } from "./ThemeToggle";
@@ -39,7 +40,8 @@ interface ToolbarProps {
 
 const tools: { type: Tool; icon: any; label: string }[] = [
   { type: "select", icon: MousePointer, label: "Select" },
-  { type: "text", icon: Type, label: "Text" },
+  { type: "edit-text", icon: Edit3, label: "Edit Text" },
+  { type: "text", icon: Type, label: "Add Text" },
   { type: "draw", icon: Pen, label: "Draw" },
   { type: "rectangle", icon: Square, label: "Rectangle" },
   { type: "circle", icon: Circle, label: "Circle" },

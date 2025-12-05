@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import { Toolbar } from "./Toolbar";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
@@ -19,23 +19,44 @@ interface PDFEditorProps {
   onBack: () => void;
 }
 
-export type Tool = "select" | "text" | "draw" | "rectangle" | "circle" | "eraser";
+interface TextItem {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  fontFamily: string;
+}
+
+interface TextEdit {
+  original: TextItem;
+  newText: string;
+  pageNum: number;
+}
+
+export type Tool = "select" | "text" | "draw" | "rectangle" | "circle" | "eraser" | "edit-text";
 
 export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState({ width: 595, height: 842 });
   const [tool, setTool] = useState<Tool>("select");
-  const [color, setColor] = useState("#00D9FF");
+  const [color, setColor] = useState("#000000");
   const [fontSize, setFontSize] = useState(16);
   const [fontFamily, setFontFamily] = useState("Arial");
   const [pdfUrl, setPdfUrl] = useState<string>("");
   const [loadError, setLoadError] = useState<string>("");
+  const [textItems, setTextItems] = useState<TextItem[]>([]);
+  const [editingText, setEditingText] = useState<TextItem | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [textEdits, setTextEdits] = useState<Map<number, TextEdit[]>>(new Map());
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricCanvasRef = useRef<FabricCanvas | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<{ states: string[]; currentIndex: number }>({ states: [], currentIndex: -1 });
   const pageAnnotationsRef = useRef<Map<number, string>>(new Map());
+  const pdfDocRef = useRef<any>(null);
   const { toast } = useToast();
 
   // Create object URL for the PDF file
@@ -44,6 +65,52 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
     setPdfUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [file]);
+
+  // Load PDF document for text extraction
+  useEffect(() => {
+    const loadPdfDoc = async () => {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+      pdfDocRef.current = pdf;
+    };
+    loadPdfDoc();
+  }, [file]);
+
+  // Extract text items when page changes
+  useEffect(() => {
+    const extractText = async () => {
+      if (!pdfDocRef.current) return;
+      
+      try {
+        const page = await pdfDocRef.current.getPage(currentPage);
+        const textContent = await page.getTextContent();
+        const viewport = page.getViewport({ scale: 1 });
+        
+        const items: TextItem[] = textContent.items
+          .filter((item: any) => item.str && item.str.trim())
+          .map((item: any) => {
+            const tx = pdfjs.Util.transform(viewport.transform, item.transform);
+            return {
+              str: item.str,
+              x: tx[4],
+              y: pageSize.height - tx[5] - item.height,
+              width: item.width,
+              height: item.height,
+              fontSize: item.transform[0] || 12,
+              fontFamily: item.fontName || 'Arial',
+            };
+          });
+        
+        setTextItems(items);
+      } catch (error) {
+        console.error("Error extracting text:", error);
+      }
+    };
+    
+    if (pageSize.width > 0) {
+      extractText();
+    }
+  }, [currentPage, pageSize]);
 
   const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
     setNumPages(numPages);
@@ -63,6 +130,55 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
   const onPageLoadSuccess = (page: any) => {
     const { width, height } = page;
     setPageSize({ width, height });
+  };
+
+  const handleTextClick = (item: TextItem) => {
+    if (tool !== "edit-text") return;
+    
+    // Check if this text was already edited
+    const pageEdits = textEdits.get(currentPage) || [];
+    const existingEdit = pageEdits.find(
+      e => e.original.x === item.x && e.original.y === item.y
+    );
+    
+    setEditingText(item);
+    setEditValue(existingEdit ? existingEdit.newText : item.str);
+  };
+
+  const handleTextEditSave = () => {
+    if (!editingText) return;
+    
+    const edit: TextEdit = {
+      original: editingText,
+      newText: editValue,
+      pageNum: currentPage,
+    };
+    
+    setTextEdits(prev => {
+      const newMap = new Map(prev);
+      const pageEdits = newMap.get(currentPage) || [];
+      const existingIndex = pageEdits.findIndex(
+        e => e.original.x === editingText.x && e.original.y === editingText.y
+      );
+      
+      if (existingIndex >= 0) {
+        pageEdits[existingIndex] = edit;
+      } else {
+        pageEdits.push(edit);
+      }
+      
+      newMap.set(currentPage, pageEdits);
+      return newMap;
+    });
+    
+    setEditingText(null);
+    setEditValue("");
+    toast({ title: "Text updated", description: "Click Export to save changes" });
+  };
+
+  const handleTextEditCancel = () => {
+    setEditingText(null);
+    setEditValue("");
   };
 
   const saveHistory = useCallback(() => {
@@ -218,13 +334,48 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
 
       const existingPdfBytes = await file.arrayBuffer();
       const pdfDoc = await PDFDocument.load(existingPdfBytes);
+      const helveticaFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
       
       toast({
         title: "Exporting PDF",
-        description: "Your annotated PDF is being prepared...",
+        description: "Your edited PDF is being prepared...",
       });
 
-      // Process each page with annotations
+      // Process text edits for each page
+      for (const [pageNum, edits] of textEdits.entries()) {
+        const page = pdfDoc.getPage(pageNum - 1);
+        const { width: pdfWidth, height: pdfHeight } = page.getSize();
+        const scaleX = pdfWidth / pageSize.width;
+        const scaleY = pdfHeight / pageSize.height;
+
+        for (const edit of edits) {
+          // Draw white rectangle to cover original text
+          const rectX = edit.original.x * scaleX;
+          const rectY = pdfHeight - (edit.original.y * scaleY) - (edit.original.height * scaleY);
+          const rectWidth = Math.max(edit.original.width * scaleX, edit.newText.length * edit.original.fontSize * 0.6 * scaleX);
+          const rectHeight = edit.original.height * scaleY * 1.2;
+
+          page.drawRectangle({
+            x: rectX - 2,
+            y: rectY - 2,
+            width: rectWidth + 4,
+            height: rectHeight + 4,
+            color: rgb(1, 1, 1),
+          });
+
+          // Draw new text
+          const textSize = edit.original.fontSize * scaleX;
+          page.drawText(edit.newText, {
+            x: rectX,
+            y: rectY + 2,
+            size: textSize,
+            font: helveticaFont,
+            color: rgb(0, 0, 0),
+          });
+        }
+      }
+
+      // Process canvas annotations for each page
       const annotationEntries = Array.from(pageAnnotationsRef.current.entries());
       
       for (const [pageNum, annotationJson] of annotationEntries) {
@@ -236,13 +387,11 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
           continue;
         }
         
-        // Calculate scale factor between display size and PDF size
         const scaleX = pdfWidth / pageSize.width;
         const scaleY = pdfHeight / pageSize.height;
         
-        // Create a high-res canvas matching PDF dimensions
         const tempCanvas = document.createElement('canvas');
-        const scale = 2; // Higher resolution for quality
+        const scale = 2;
         tempCanvas.width = pdfWidth * scale;
         tempCanvas.height = pdfHeight * scale;
         
@@ -254,20 +403,15 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
         
         await new Promise(resolve => setTimeout(resolve, 50));
         
-        // Scale objects to match PDF coordinates
         const scaledObjects = parsed.objects.map((obj: any) => {
           const scaled: any = { ...obj };
-          
-          // Scale position
           scaled.left = (obj.left || 0) * scaleX * scale;
           scaled.top = (obj.top || 0) * scaleY * scale;
           
-          // Handle path objects (drawings, eraser strokes)
           if (obj.type === 'path' && obj.path) {
             scaled.path = obj.path.map((cmd: any[]) => {
               return cmd.map((val, idx) => {
-                if (idx === 0) return val; // Keep command letter
-                // Scale coordinates (odd indices are x, even are y for most commands)
+                if (idx === 0) return val;
                 return typeof val === 'number' ? val * scaleX * scale : val;
               });
             });
@@ -275,12 +419,10 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
             scaled.scaleY = 1;
             scaled.strokeWidth = (obj.strokeWidth || 1) * scale;
           } else {
-            // Handle other objects
             scaled.scaleX = (obj.scaleX || 1) * scaleX * scale;
             scaled.scaleY = (obj.scaleY || 1) * scaleY * scale;
             scaled.strokeWidth = (obj.strokeWidth || 1) * scale;
             
-            // For text, scale fontSize instead of using scaleX/scaleY
             if (obj.type === 'i-text' || obj.type === 'text') {
               scaled.fontSize = (obj.fontSize || 16) * scaleX * scale;
               scaled.scaleX = 1;
@@ -443,6 +585,18 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleUndo, handleRedo, handleDeleteSelected]);
 
+  // Get edited text display value
+  const getDisplayText = (item: TextItem) => {
+    const pageEdits = textEdits.get(currentPage) || [];
+    const edit = pageEdits.find(e => e.original.x === item.x && e.original.y === item.y);
+    return edit ? edit.newText : item.str;
+  };
+
+  const isTextEdited = (item: TextItem) => {
+    const pageEdits = textEdits.get(currentPage) || [];
+    return pageEdits.some(e => e.original.x === item.x && e.original.y === item.y);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-background">
       <Toolbar
@@ -501,14 +655,73 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
                   />
                 </Document>
               )}
+              
+              {/* Text edit overlay - clickable text items */}
+              {tool === "edit-text" && (
+                <div 
+                  className="absolute top-0 left-0 pointer-events-none"
+                  style={{ width: pageSize.width, height: pageSize.height }}
+                >
+                  {textItems.map((item, index) => (
+                    <div
+                      key={index}
+                      className={`absolute pointer-events-auto cursor-text transition-all ${
+                        isTextEdited(item) 
+                          ? "bg-green-200/50 border border-green-500" 
+                          : "hover:bg-blue-200/50 hover:border hover:border-blue-500"
+                      }`}
+                      style={{
+                        left: item.x,
+                        top: item.y,
+                        minWidth: item.width,
+                        minHeight: item.height,
+                        fontSize: item.fontSize,
+                        padding: '0 2px',
+                      }}
+                      onClick={() => handleTextClick(item)}
+                    >
+                      {isTextEdited(item) && (
+                        <span className="text-black" style={{ fontSize: item.fontSize }}>
+                          {getDisplayText(item)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Edited text display overlay */}
+              {tool !== "edit-text" && (
+                <div 
+                  className="absolute top-0 left-0 pointer-events-none"
+                  style={{ width: pageSize.width, height: pageSize.height }}
+                >
+                  {(textEdits.get(currentPage) || []).map((edit, index) => (
+                    <div
+                      key={index}
+                      className="absolute bg-white"
+                      style={{
+                        left: edit.original.x - 2,
+                        top: edit.original.y - 2,
+                        padding: '2px 4px',
+                        fontSize: edit.original.fontSize,
+                        color: '#000',
+                      }}
+                    >
+                      {edit.newText}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <div 
-                className="absolute top-0 left-0"
+                className={`absolute top-0 left-0 ${tool === "edit-text" ? "pointer-events-none" : ""}`}
                 style={{ width: pageSize.width, height: pageSize.height }}
               >
                 <canvas
                   ref={canvasRef}
                   style={{ 
-                    cursor: tool === "select" ? "default" : "crosshair",
+                    cursor: tool === "select" ? "default" : tool === "edit-text" ? "text" : "crosshair",
                   }}
                 />
               </div>
@@ -516,6 +729,41 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
           )}
         </div>
       </div>
+
+      {/* Text edit dialog */}
+      {editingText && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card rounded-lg p-6 shadow-xl max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4">Edit Text</h3>
+            <p className="text-sm text-muted-foreground mb-2">Original: "{editingText.str}"</p>
+            <input
+              type="text"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              className="w-full px-3 py-2 border border-border rounded-lg bg-background text-foreground mb-4"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleTextEditSave();
+                if (e.key === 'Escape') handleTextEditCancel();
+              }}
+            />
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={handleTextEditCancel}
+                className="px-4 py-2 border border-border rounded-lg hover:bg-muted"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTextEditSave}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:opacity-90"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
