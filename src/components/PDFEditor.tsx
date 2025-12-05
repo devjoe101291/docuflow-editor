@@ -228,43 +228,71 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
       const annotationEntries = Array.from(pageAnnotationsRef.current.entries());
       
       for (const [pageNum, annotationJson] of annotationEntries) {
-        const page = pdfDoc.getPage(pageNum - 1); // pdf-lib uses 0-based index
+        const page = pdfDoc.getPage(pageNum - 1);
         const { width: pdfWidth, height: pdfHeight } = page.getSize();
         
-        // Parse and check if there are objects
         const parsed = JSON.parse(annotationJson);
         if (!parsed.objects || parsed.objects.length === 0) {
           continue;
         }
         
-        // Create a temporary canvas element
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = pageSize.width * 2; // Higher resolution
-        tempCanvas.height = pageSize.height * 2;
+        // Calculate scale factor between display size and PDF size
+        const scaleX = pdfWidth / pageSize.width;
+        const scaleY = pdfHeight / pageSize.height;
         
-        // Create fabric canvas
+        // Create a high-res canvas matching PDF dimensions
+        const tempCanvas = document.createElement('canvas');
+        const scale = 2; // Higher resolution for quality
+        tempCanvas.width = pdfWidth * scale;
+        tempCanvas.height = pdfHeight * scale;
+        
         const tempFabricCanvas = new FabricCanvas(tempCanvas, {
           backgroundColor: 'transparent',
-          width: pageSize.width * 2,
-          height: pageSize.height * 2,
+          width: pdfWidth * scale,
+          height: pdfHeight * scale,
         });
         
-        // Wait for fabric canvas to initialize
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 50));
         
-        // Scale all objects to match higher resolution
-        const scaledObjects = parsed.objects.map((obj: any) => ({
-          ...obj,
-          left: (obj.left || 0) * 2,
-          top: (obj.top || 0) * 2,
-          scaleX: (obj.scaleX || 1) * 2,
-          scaleY: (obj.scaleY || 1) * 2,
-          strokeWidth: (obj.strokeWidth || 1) * 2,
-        }));
+        // Scale objects to match PDF coordinates
+        const scaledObjects = parsed.objects.map((obj: any) => {
+          const scaled: any = { ...obj };
+          
+          // Scale position
+          scaled.left = (obj.left || 0) * scaleX * scale;
+          scaled.top = (obj.top || 0) * scaleY * scale;
+          
+          // Handle path objects (drawings, eraser strokes)
+          if (obj.type === 'path' && obj.path) {
+            scaled.path = obj.path.map((cmd: any[]) => {
+              return cmd.map((val, idx) => {
+                if (idx === 0) return val; // Keep command letter
+                // Scale coordinates (odd indices are x, even are y for most commands)
+                return typeof val === 'number' ? val * scaleX * scale : val;
+              });
+            });
+            scaled.scaleX = 1;
+            scaled.scaleY = 1;
+            scaled.strokeWidth = (obj.strokeWidth || 1) * scale;
+          } else {
+            // Handle other objects
+            scaled.scaleX = (obj.scaleX || 1) * scaleX * scale;
+            scaled.scaleY = (obj.scaleY || 1) * scaleY * scale;
+            scaled.strokeWidth = (obj.strokeWidth || 1) * scale;
+            
+            // For text, scale fontSize instead of using scaleX/scaleY
+            if (obj.type === 'i-text' || obj.type === 'text') {
+              scaled.fontSize = (obj.fontSize || 16) * scaleX * scale;
+              scaled.scaleX = 1;
+              scaled.scaleY = 1;
+            }
+          }
+          
+          return scaled;
+        });
         
         const scaledJson = { ...parsed, objects: scaledObjects };
         
-        // Load the annotations
         await new Promise<void>((resolve) => {
           tempFabricCanvas.loadFromJSON(JSON.stringify(scaledJson), () => {
             tempFabricCanvas.renderAll();
@@ -272,23 +300,17 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
           });
         });
         
-        // Wait for render to complete
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        // Export canvas as PNG with transparency
         const dataUrl = tempFabricCanvas.toDataURL({
           format: 'png',
           multiplier: 1,
         });
 
-        // Convert data URL to bytes
         const base64Data = dataUrl.split(',')[1];
         const imageBytes = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-
-        // Embed the image
         const pngImage = await pdfDoc.embedPng(imageBytes);
         
-        // Draw the annotation image on top of the page
         page.drawImage(pngImage, {
           x: 0,
           y: 0,
@@ -296,7 +318,6 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
           height: pdfHeight,
         });
         
-        // Clean up temp canvas
         tempFabricCanvas.dispose();
       }
 
