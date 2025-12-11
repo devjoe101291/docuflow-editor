@@ -668,62 +668,67 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
               {/* Text edit overlay - clickable text items */}
               {tool === "edit-text" && (
                 <div 
-                  className="absolute top-0 left-0 z-20"
+                  className="absolute top-0 left-0 z-30"
                   style={{ width: pageSize.width, height: pageSize.height }}
                 >
+                  {textItems.length === 0 && (
+                    <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-yellow-100 p-4 rounded shadow">
+                      Loading text elements...
+                    </div>
+                  )}
                   {textItems.map((item, index) => {
                     const isEditing = editingText && editingText.x === item.x && editingText.y === item.y;
                     const edited = isTextEdited(item);
                     
+                    if (isEditing) {
+                      return (
+                        <input
+                          key={index}
+                          type="text"
+                          value={editValue}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          onBlur={handleTextEditSave}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleTextEditSave();
+                            if (e.key === 'Escape') handleTextEditCancel();
+                          }}
+                          autoFocus
+                          className="absolute bg-white border-2 border-blue-500 outline-none px-1"
+                          style={{
+                            left: item.x,
+                            top: item.y - 2,
+                            fontSize: item.fontSize,
+                            fontFamily: 'Arial, sans-serif',
+                            color: '#000',
+                            minWidth: Math.max(item.width, 100),
+                            height: item.height + 6,
+                          }}
+                        />
+                      );
+                    }
+                    
                     return (
                       <div
                         key={index}
-                        className="absolute"
+                        className={`absolute cursor-text transition-all ${
+                          edited 
+                            ? "bg-yellow-200 border border-yellow-500" 
+                            : "bg-blue-100/50 hover:bg-blue-200/80 border border-transparent hover:border-blue-400"
+                        }`}
                         style={{
                           left: item.x,
-                          top: item.y,
-                          minWidth: Math.max(item.width, 50),
+                          top: item.y - 2,
+                          minWidth: Math.max(item.width, 20),
                           height: item.height + 4,
+                          fontSize: item.fontSize,
+                          fontFamily: 'Arial, sans-serif',
+                          color: '#000',
+                          lineHeight: `${item.height}px`,
+                          padding: '2px 4px',
                         }}
+                        onClick={() => handleTextClick(item)}
                       >
-                        {isEditing ? (
-                          <input
-                            type="text"
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={handleTextEditSave}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') handleTextEditSave();
-                              if (e.key === 'Escape') handleTextEditCancel();
-                            }}
-                            autoFocus
-                            className="bg-white border-2 border-blue-500 outline-none px-1"
-                            style={{
-                              fontSize: item.fontSize,
-                              fontFamily: item.fontFamily,
-                              color: '#000',
-                              minWidth: Math.max(item.width, 100),
-                              height: item.height + 4,
-                            }}
-                          />
-                        ) : (
-                          <div
-                            className={`cursor-text h-full px-1 ${
-                              edited 
-                                ? "bg-yellow-200/80 border border-yellow-500" 
-                                : "hover:bg-blue-100/80 hover:border hover:border-blue-400"
-                            }`}
-                            style={{
-                              fontSize: item.fontSize,
-                              fontFamily: item.fontFamily,
-                              color: edited ? '#000' : 'transparent',
-                              lineHeight: `${item.height}px`,
-                            }}
-                            onClick={() => handleTextClick(item)}
-                          >
-                            {edited ? getDisplayText(item) : item.str}
-                          </div>
-                        )}
+                        {edited ? getDisplayText(item) : item.str}
                       </div>
                     );
                   })}
