@@ -668,7 +668,7 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
               {/* Text edit overlay - clickable text items */}
               {tool === "edit-text" && (
                 <div 
-                  className="absolute top-0 left-0"
+                  className="absolute top-0 left-0 z-20"
                   style={{ width: pageSize.width, height: pageSize.height }}
                 >
                   {textItems.map((item, index) => {
@@ -756,7 +756,7 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
               )}
 
               <div 
-                className={`absolute top-0 left-0 ${tool === "edit-text" ? "pointer-events-none" : ""}`}
+                className={`absolute top-0 left-0 z-10 ${tool === "edit-text" ? "pointer-events-none" : ""}`}
                 style={{ width: pageSize.width, height: pageSize.height }}
               >
                 <canvas
