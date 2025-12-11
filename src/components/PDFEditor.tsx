@@ -90,18 +90,20 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
     try {
       const page = await pdfDocRef.current.getPage(pageNum);
       const textContent = await page.getTextContent();
-      const viewport = page.getViewport({ scale: pageSize.width / page.getViewport({ scale: 1 }).width });
+      const defaultViewport = page.getViewport({ scale: 1 });
+      const scale = pageSize.width / defaultViewport.width;
+      const viewport = page.getViewport({ scale });
       
       const items: TextItem[] = textContent.items
         .filter((item: any) => item.str && item.str.trim())
         .map((item: any) => {
           const tx = pdfjs.Util.transform(viewport.transform, item.transform);
-          const fontSize = Math.abs(item.transform[0]) * (pageSize.width / page.getViewport({ scale: 1 }).width);
+          const fontSize = Math.abs(item.transform[0]) * scale;
           return {
             str: item.str,
             x: tx[4],
-            y: pageSize.height - tx[5],
-            width: item.width * (pageSize.width / page.getViewport({ scale: 1 }).width),
+            y: tx[5] - fontSize, // Adjusted: tx[5] is the baseline, subtract fontSize to get top
+            width: item.width * scale,
             height: fontSize * 1.2,
             fontSize: fontSize,
             fontFamily: item.fontName || 'Helvetica',
@@ -141,7 +143,9 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
     setPageSize({ width, height });
   };
 
-  const handleTextClick = (item: TextItem) => {
+  const handleTextClick = (item: TextItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
     if (tool !== "edit-text") return;
     
     // Check if this text was already edited
@@ -726,7 +730,8 @@ export const PDFEditor = ({ file, onBack }: PDFEditorProps) => {
                           lineHeight: `${item.height}px`,
                           padding: '2px 4px',
                         }}
-                        onClick={() => handleTextClick(item)}
+                        onClick={(e) => handleTextClick(item, e)}
+                        onMouseDown={(e) => e.stopPropagation()}
                       >
                         {edited ? getDisplayText(item) : item.str}
                       </div>
